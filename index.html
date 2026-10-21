@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gameday Wheel — NFL Position Spinner</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#f5f6fa;background:#101827}*{box-sizing:border-box}body{margin:0}main{max-width:980px;margin:auto;padding:20px}h1{font-size:clamp(28px,6vw,48px);margin:4px 0 12px}h2{margin:8px 0}p,small{color:#c5d1e1}button,input{font:inherit}button{border:1px solid #60758c;border-radius:10px;background:#223249;color:white;padding:12px 17px;cursor:pointer}button:disabled{opacity:.45;cursor:wait}.active,.primary{background:#e85d35;border-color:#e85d35;color:#fff}button:focus-visible,input:focus-visible{outline:3px solid #f7c948}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}.panel{background:#1b283b;border:1px solid #41536b;border-radius:16px;padding:18px;margin:16px 0}.layout{display:grid;grid-template-columns:1fr 1fr;gap:18px}.wheel{position:relative;width:min(100%,390px);aspect-ratio:1;margin:16px auto;border:10px solid #0b111b;border-radius:50%;background:conic-gradient(#e85d35 0 47.5%,#279b79 47.5% 95%,#9c74d7 95% 100%);display:grid;place-items:center;transition:transform 3s cubic-bezier(.15,.8,.2,1);box-shadow:0 8px 30px #0008}.wheel:after{content:"";position:absolute;top:-19px;left:calc(50% - 14px);border-left:14px solid transparent;border-right:14px solid transparent;border-top:25px solid white;filter:drop-shadow(0 2px 2px #000)}.wheel span{background:#0d1521;border-radius:50%;width:35%;aspect-ratio:1;display:grid;place-items:center;font-size:20px;font-weight:900;box-shadow:0 0 0 6px #ffffffb0}.big{font-size:23px;font-weight:800}.muted{color:#b6c6d8}.status{padding:10px;border-radius:8px;background:#293b51}.pill{background:#293c54;border-radius:20px;padding:6px 10px;font-size:13px}.results{min-height:110px}.history{max-height:260px;overflow:auto}li{padding:5px}input{padding:11px;background:#101827;border:1px solid #65758c;border-radius:8px;color:white;max-width:180px}@media(max-width:680px){.layout{grid-template-columns:1fr}main{padding:12px}.wheel{max-width:330px}}
+</style></head><body><main><small>GAMEDAY WHEEL</small><h1>NFL POSITION SPINNER</h1><div class="row"><button id="jordan" class="active">JORDAN</button><button id="sean">SEAN</button><span id="sync" class="pill">Local mode</span></div>
+<section class="panel"><h2>Shared room</h2><p>Both players use the same room code. Firebase must be configured for live syncing.</p><div class="row"><input id="room" placeholder="Room code" aria-label="Room code"><button id="join">Join room</button><button id="invite">Copy invite</button></div><small id="connection">Offline/local game. See setup instructions in README.</small></section>
+<div class="layout"><section class="panel"><div id="step" class="muted">WIN / LOSE</div><div id="wheel" class="wheel"><span>SPIN</span></div><div id="actions" class="row"></div><div id="result" class="results status" aria-live="polite">Choose WIN or LOSE to begin.</div></section>
+<section class="panel"><h2 id="who">JORDAN</h2><div id="streaks" class="row"></div><h3>Winner wheel</h3><div id="wins"></div><h3>Loser wheel</h3><div id="losses"></div><button id="reset">Reset selected player's wheels</button></section></div>
+<p>Offense 47.5% · Defense 47.5% · Special teams 5%. A picked position sits out for the next 10 spins on its respective wheel. Three straight wins trigger a curse; three straight losses trigger a blessing.</p>
+</main><script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script><script src="firebase-config.js"></script>
+<script>
+(()=>{'use strict';
+const $=id=>document.getElementById(id), OFF=['QB','HB','FB','WR','TE','LT','LG','C','RG','RT'],DEF=['LE','RE','DT','LOLB','MLB','ROLB','CB','FS','SS'],ST=['K','P','KR','PR'];
+const empty=()=>({wins:[],losses:[],streak:0}), fresh=()=>({Jordan:empty(),Sean:empty(),events:[]});
+let state=fresh(),player='Jordan',kind='',stage='choice',side='',position='',spinning=false,db=null,room='',rotation=0,bonus=0,penalty='',lastVersion=0;
+try{state=JSON.parse(localStorage.getItem('gameday-state'))||fresh()}catch{}
+for(const name of ['Jordan','Sean'])if(!state[name])state[name]=empty();
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function save(){localStorage.setItem('gameday-state',JSON.stringify(state));if(db&&room)db.ref('rooms/'+room+'/state').set(state).catch(e=>status('Sync failed: '+e.message))}
+function status(t){$('connection').textContent=t;$('sync').textContent=db?'Shared room':'Local mode'}
+function choice(arr){return arr[Math.floor(Math.random()*arr.length)]}
+function wheelSpin(cb){spinning=true;rotation+=1440+Math.floor(Math.random()*720);$('wheel').style.transform='rotate('+rotation+'deg)';render();setTimeout(()=>{spinning=false;cb();render()},3100)}
+function positions(side){return side==='Offense'?OFF:side==='Defense'?DEF:ST}
+function pool(k,s){let history=state[player][k],recent=history.slice(-10).map(x=>x.position);let options=positions(s).filter(p=>!recent.includes(p));return options.length?options:positions(s)}
+function chooseSide(){let r=Math.random();return r<.475?'Offense':r<.95?'Defense':'Special teams'}
+function addSpin(k,s,p){let item={side:s,position:p,at:Date.now()};state[player][k].push(item);state.events.unshift({player,kind:k,...item});state.events=state.events.slice(0,80);save();return item}
+function start(k){kind=k;stage='side';$('result').textContent=(k==='wins'?'WIN':'LOSS')+' wheel: spin for a side.';render()}
+function spinSide(){wheelSpin(()=>{side=chooseSide();stage='position';$('result').textContent='You landed on '+side+'. Spin for a position.'})}
+function spinPosition(){wheelSpin(()=>{position=choice(pool(kind,side));stage='players';$('result').textContent=position+' — How many eligible players are at this position?'})}
+function pickCount(n){let num=Math.max(1,Math.min(99,Number(n)||1));let roll=Math.floor(Math.random()*num)+1;let item=addSpin(kind,side,position);item.count=num;item.pick=roll;save();stage='final';$('result').innerHTML='<strong>'+esc(player)+' — '+(kind==='wins'?'GAIN':'LOSE')+' '+esc(position)+'</strong><p>'+esc(side)+' · Player #'+roll+' of '+num+'</p>';render()}
+function finish(){if(bonus>0){bonus--;kind=penalty==='curse'?'losses':'wins';stage='side';$('result').textContent='Bonus spin '+(bonus+1)+' of '+(bonus+1);render();return}
+if(penalty){penalty='';stage='choice';$('result').textContent='All streak consequences completed. Continue to the next week.';render();return}
+let p=state[player],s=p.streak;
+if(Math.abs(s)>=3){p.streak=0;save();stage='curse';$('result').textContent=s>0?'YOU ARE TOO GOOD! Pick Your Poison.':'YOU KINDA SUCK! Pick Your Miracle.';render();return}
+stage='choice';$('result').textContent='Week complete. Continue to the next week.';render()}
+function recordOutcome(k){let p=state[player];p.streak=k==='wins'?Math.max(0,p.streak)+1:Math.min(0,p.streak)-1;save();start(k)}
+function consequence(){let curse=$('result').textContent.includes('TOO GOOD'),r=Math.random();if(r<.475){penalty=curse?'curse':'blessing';bonus=2;kind=curse?'losses':'wins';stage='side';$('result').textContent=curse?'DOUBLE TROUBLE — two loser wheel spins.':'DOUBLE THE LUCK — two winner wheel spins.'}
+else if(r<.95){penalty=curse?'curse':'blessing';bonus=2;kind=curse?'losses':'wins';stage='side';$('result').textContent=curse?'CHOOSE YOUR DEMISE — at each position lose your highest overall player.':'UPGRADE YOUR LUCK — at each position take the highest overall available player.'}
+else{penalty=curse?'curse':'blessing';bonus=0;stage='ultimate';$('result').textContent=curse?'ULTIMATE SACRIFICE — lose your highest overall player.':'ULTIMATE HANDOUT — take the highest overall available player.'}render()}
+function btn(label,fn,cls=''){let b=document.createElement('button');b.textContent=label;b.className=cls;b.disabled=spinning;b.onclick=fn;$('actions').appendChild(b)}
+function render(){for(const n of ['Jordan','Sean'])$(n.toLowerCase()).classList.toggle('active',player===n);$('who').textContent=player.toUpperCase();let p=state[player];$('streaks').innerHTML='<span class="pill">Win streak '+Math.max(0,p.streak)+'/3</span><span class="pill">Loss streak '+Math.max(0,-p.streak)+'/3</span>';
+for(let k of ['wins','losses']){let recent=p[k].slice(-10),out=recent.map(x=>esc(x.position)).join(', ')||'Every position available';$(k).innerHTML='<p>'+p[k].length+' spins · Sitting out: '+out+'</p><ol class="history">'+p[k].slice(-12).reverse().map(x=>'<li>'+esc(x.side)+' · '+esc(x.position)+(x.pick?' · #'+x.pick:'')+'</li>').join('')+'</ol>'}
+$('step').textContent=({choice:'WIN / LOSE',side:'SIDE',position:'POSITION',players:'PLAYERS',final:'PICK',curse:'STREAK EVENT',ultimate:'ULTIMATE EVENT'})[stage];$('actions').replaceChildren();
+if(stage==='choice'){btn('WIN',()=>recordOutcome('wins'),'primary');btn('LOSE',()=>recordOutcome('losses'))}
+if(stage==='side')btn('SPIN SIDE',spinSide,'primary');
+if(stage==='position')btn('SPIN POSITION',spinPosition,'primary');
+if(stage==='players'){let label=document.createElement('label');label.textContent='Players at position: ';let input=document.createElement('input');input.type='number';input.min=1;input.max=99;input.value=1;label.appendChild(input);$('actions').appendChild(label);btn('ROLL PLAYER',()=>pickCount(input.value),'primary')}
+if(stage==='final')btn('SHOW FINAL RESULT / CONTINUE',finish,'primary');
+if(stage==='curse')btn('SPIN STREAK WHEEL',consequence,'primary');
+if(stage==='ultimate')btn('CONFIRM RESULT / NEXT WEEK',()=>{penalty='';stage='choice';$('result').textContent='Consequence recorded. Next week.';render()},'primary')}
+}
+for(const n of ['Jordan','Sean'])$(n.toLowerCase()).onclick=()=>{player=n;stage='choice';render()};
+$('reset').onclick=()=>{if(confirm('Reset '+player+' winner and loser wheels?')){state[player]=empty();save();stage='choice';render()}};
+function roomCode(){return $('room').value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'').slice(0,48)}
+$('invite').onclick=()=>{let url=new URL(location.href);url.searchParams.set('room',roomCode()||'friends');navigator.clipboard.writeText(url.href).then(()=>status('Invite copied. Share with your friend.')).catch(()=>status('Copy this URL: '+url.href))};
+$('join').onclick=async()=>{room=roomCode();if(!room){status('Enter a room code first.');return}if(!window.FIREBASE_CONFIG||!window.FIREBASE_CONFIG.apiKey||window.FIREBASE_CONFIG.apiKey==='PASTE_API_KEY_HERE'){status('Firebase is not configured yet. See README.');return}try{if(!firebase.apps.length)firebase.initializeApp(window.FIREBASE_CONFIG);await firebase.auth().signInAnonymously();db=firebase.database();let ref=db.ref('rooms/'+room+'/state');ref.off();ref.on('value',snap=>{if(snap.exists()){state=snap.val();for(const n of ['Jordan','Sean'])if(!state[n])state[n]=empty();localStorage.setItem('gameday-state',JSON.stringify(state));render()}else ref.set(state);status('Live room: '+room)},e=>status('Connection error: '+e.message))}catch(e){status('Connection failed: '+e.message)}};
+let fromUrl=new URLSearchParams(location.search).get('room');if(fromUrl){$('room').value=fromUrl;setTimeout(()=>$('join').click(),200)}render();
+})();
+</script></body></html>
